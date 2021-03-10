@@ -68,32 +68,45 @@ class TransformerDecoderBlock(NeuralModule):
 
     # TODO: add Neural Types
     def forward(self, decoder_query, decoder_mask, decoder_keys, encoder_states, encoder_mask):
-
-        # Pre-LN: LN -> Self-Attn -> Drop -> Residual -> LN -> Cross-Attn -> Drop -> Residual -> LN -> FFN
-        # Post-LN: Self-Attn -> Drop -> Residual -> LN -> Cross-Attn -> Drop -> Residual -> LN -> FFN -> Residual -> LN
         if self.pre_ln:
-            # Share same LN params for query, key (self-attn)
-            decoder_query = self.layer_norm_1(decoder_query)
-            decoder_keys = self.layer_norm_1(decoder_keys)
+            return self.forward_preln(decoder_query, decoder_mask, decoder_keys, encoder_states, encoder_mask)
 
+        return self.forward_normal(decoder_query, decoder_mask, decoder_keys, encoder_states, encoder_mask)
+ 
+    def forward_normal(self, decoder_query, decoder_mask, decoder_keys, encoder_states, encoder_mask):
         self_attn_output = self.first_sub_layer(decoder_query, decoder_keys, decoder_keys, decoder_mask)
         self_attn_output += decoder_query
 
-        self_attn_output = self.layer_norm_2(self_attn_output) if self.pre_ln else self.layer_norm_1(self_attn_output)
+        self_attn_output = self.layer_norm_1(self_attn_output)
 
         enc_dec_attn_output = self.second_sub_layer(self_attn_output, encoder_states, encoder_states, encoder_mask)
         enc_dec_attn_output += self_attn_output
 
-        enc_dec_attn_output = (
-            self.layer_norm_3(enc_dec_attn_output) if self.pre_ln else self.layer_norm_2(enc_dec_attn_output)
-        )
+        enc_dec_attn_output = self.layer_norm_2(enc_dec_attn_output)
 
         output_states = self.third_sub_layer(enc_dec_attn_output)
-
-        if not self.pre_ln:
-            output_states = self.layer_norm_3(output_states + enc_dec_attn_output)
+        output_states = self.layer_norm_3(output_states + enc_dec_attn_output)
 
         return output_states
+
+    def forward_preln(self, decoder_query, decoder_mask, decoder_keys, encoder_states, encoder_mask):
+        residual = decoder_query 
+        decoder_query = self.layer_norm_1(decoder_query)
+        decoder_keys = self.layer_norm_1(decoder_keys)
+
+        self_attn_output = self.first_sub_layer(decoder_query, decoder_keys, decoder_keys, decoder_mask)
+        self_attn_output += residual
+
+        residual = self_attn_output
+        self_attn_output = self.layer_norm_2(self_attn_output)
+        enc_dec_attn_output = self.second_sub_layer(self_attn_output, encoder_states, encoder_states, encoder_mask)
+        enc_dec_attn_output += residual
+
+        residual = enc_dec_attn_output
+        enc_dec_attn_output = self.layer_norm_3(enc_dec_attn_output)
+        output_states = self.third_sub_layer(enc_dec_attn_output)
+
+        return output_states + residual
 
 
 class TransformerDecoder(nn.Module):
